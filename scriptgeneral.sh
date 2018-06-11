@@ -2,14 +2,14 @@
 
 #crear nuevo directorio
 mkdir nc${1}
-echo "Directorio ~/Guillermo/DatosAnaMaria/nc${1} creado"
+echo "Directorio /nc${1} creado"
 
 #copiar archivo .ctl a nuevo directorio
-rsync -zvh r_pgb.ctl nc${1}/
+rsync -zvh r_pgb.ctl nc${1}
 echo 'Archivo ctl copiado al nuevo directorio'
 
 #copiar archivo .gs al nuevo directorio
-rsync -zvh script_grads.gs nc${1}/
+rsync -zvh script_grads.gs nc${1}
 echo 'Archivo script gs copiado al nuevo directorio'
 
 #ir al nuevo directorio
