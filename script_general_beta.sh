@@ -37,8 +37,9 @@ for files in ./*.nc; do
 		cdo daysum "$files" "${files%.*nc}_d.nc"
 	else
 		cdo daymean "$files" "${files%.*nc}_d.nc"
-	fi 
+	fi &
 done
+wait
 echo 'Procesamiento de CDO finalizado'
 
 #eliminar archivos intermedios
