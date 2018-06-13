@@ -26,12 +26,14 @@ echo "Archivo ctl actualizado a valores del año ${1}"
 sed -i -e "s/80/${1:2:2}/g" script_grads.gs
 echo "Archivo script gs actualizado a valores del año ${1:2:2}"
 
+echo date
 #correr grads con script desde la línea de comandos
 grads -bpcx "run script_grads.gs"
 echo 'Procesamiento de GrADS finalizado'
-
+echo date
 #https://www.cyberciti.biz/tips/bash-shell-parameter-substitution-2.html
 
+echo date
 #script para CDO y sumas/promedios diarios
 declare -a sumas=("CPRAT1sfc_${1:2:2}.nc" "CPRAT2sfc_${1:2:2}.nc" "CPRATsfc_${1:2:2}.nc")
 
@@ -45,6 +47,7 @@ done
 wait
 echo 'Procesamiento de CDO finalizado'
 
+echo date
 #eliminar archivos intermedios
 shopt -s extglob
 rm !(*_d.nc)
