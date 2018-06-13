@@ -1,5 +1,8 @@
 #!/bin/bash
 
+#mostrar fecha y hora de inicio de script
+echo date
+
 #crear nuevo directorio
 mkdir nc${1}
 echo "Directorio /nc${1} creado"
@@ -43,6 +46,9 @@ wait
 echo 'Procesamiento de CDO finalizado'
 
 #eliminar archivos intermedios
-#shopt -s extglob
-#rm !(*_d.nc)
+shopt -s extglob
+rm !(*_d.nc)
 echo 'Eliminación de archivos temporales lista'
+
+#mostrar fecha y hora de finalizaación de script
+echo date
