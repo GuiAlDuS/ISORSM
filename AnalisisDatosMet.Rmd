@@ -1,0 +1,970 @@
+---
+title: "Analisis de base de datos de estaciones meteorológicas"
+output: html_notebook
+---
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+1. Lectura de archivo con información de estaciones meteorológicas
+```{r message=FALSE, warning=FALSE}
+datosRAWprec <- read_csv("precip_diaCR.csv")
+datosRAWtmax <- read_csv("Tmax.csv")
+datosRAWtmin <- read_csv("Tmin.csv")
+```
+
+2. Convertir a tidy dataset
+
+Convertir "AÑO" "MES" y "DIA" a columna de fecha
+```{r}
+datosRAWprec$Fecha <- ymd(paste(datosRAWprec$AÑO, datosRAWprec$MES, datosRAWprec$DIA, sep = "/"))
+datosRAWtmax$Fecha <- ymd(paste(datosRAWtmax$AÑO, datosRAWtmax$MES, datosRAWtmax$DIA, sep = "/"))
+datosRAWtmin$Fecha <- ymd(paste(datosRAWtmin$AÑO, datosRAWtmin$MES, datosRAWtmin$DIA, sep = "/"))
+```
+
+Hacer dos columnas para variables: Fecha y Estacion
+```{r}
+datosEst1 <- datosRAWprec %>% select(-AÑO, -MES, -DIA) %>%  gather(Estacion, Precip, 1:212, -Fecha)
+datosEst2 <- datosRAWtmax %>% select(-AÑO, -MES, -DIA) %>%  gather(Estacion, Tmax, 1:122, -Fecha)
+datosEst3 <- datosRAWtmin %>% select(-AÑO, -MES, -DIA) %>%  gather(Estacion, Tmin, 1:122, -Fecha)
+datosEst <- datosEst1 %>% full_join(datosEst2) %>% full_join(datosEst3)
+rm(datosEst1, datosEst2, datosEst3)
+rm(datosRAWprec, datosRAWtmax, datosRAWtmin)
+```
+
+Verificar número de estaciones en tabla "datosEST"
+```{r}
+datosEst %>% group_by(Estacion) %>% summarise(n=n()) %>% nrow()
+```
+
+
+3. Filtrar datos igual o mayores a 1980
+```{r}
+datosGT1980 <- datosEst %>% filter(Fecha >= ymd("1980-01-01"))
+```
+
+
+4. Cargar tabla con ubicación de estaciones
+```{r}
+EstLoc <- read_csv("EstCoord.csv")
+```
+Mapa con ubicación de cada estación
+```{r}
+library(leaflet)
+leaflet(EstLoc) %>% addTiles() %>% addMarkers(~LONG, ~LAT, popup = ~as.character(CODIGO))
+```
+
+Revisión de cuán completos están los datos
+```{r}
+datosGT1980$aNo <- year(datosGT1980$Fecha)
+datosNAs_aNo <- datosGT1980 %>% group_by(aNo) %>% 
+  summarise(PrecipNAs = sum(is.na(Precip)), TminNAs = sum(is.na(Tmin)), TmaxNAs = sum(is.na(Tmax)))
+
+datosNAs_aNo_gg <- datosNAs_aNo %>% gather(PrecipNAs, TminNAs, TmaxNAs, key = "Variable", value = "Valor")
+
+ggplot(datosNAs_aNo_gg, aes(x=aNo, y=Valor, colour = Variable)) + geom_line() + ggtitle("Numero de NAs por año para cada variable")
+```
+Porcentaje de total de datos anuales en NA
+```{r}
+naNo <- datosGT1980 %>% group_by(aNo) %>% tally()
+datosNAs_aNo_gg <- full_join(datosNAs_aNo_gg, naNo, by = "aNo", copy = T)
+datosNAs_aNo_gg <- datosNAs_aNo_gg %>% mutate(prctNA = Valor/n*100)
+ggplot(datosNAs_aNo_gg, aes(x=aNo, y=prctNA, colour = Variable)) + geom_line() + ggtitle("Porcentaje de NAs por año para cada variable")
+```
+
+Rango de valores de estaciones (233 estaciones)
+```{r}
+datos1980_2014gathered <- datos1980_2014 <- datosGT1980 %>% 
+  filter(aNo <= 2014) %>%
+  gather(Precip, Tmin, Tmax, key = "Variable", value = "Valor") %>% mutate(Valor = as.numeric(Valor))
+
+datos1980_2014gathered %>% filter(Variable == "Tmin") %>% group_by(Variable) %>% summarise(max = max(Valor, na.rm = T), min = min(Valor, na.rm = T), promedio = mean(Valor, na.rm = T), media = median(Valor, na.rm = T))
+
+datos1980_2014gathered %>% filter(Variable == "Tmax") %>% group_by(Variable) %>% summarise(max = max(Valor, na.rm = T), min = min(Valor, na.rm = T), promedio = mean(Valor, na.rm = T), media = median(Valor, na.rm = T))
+
+datos1980_2014gathered %>% filter(Variable == "Precip") %>% group_by(Variable) %>% summarise(max = max(Valor, na.rm = T), min = min(Valor, na.rm = T), promedio = mean(Valor, na.rm = T), media = median(Valor, na.rm = T))
+
+ggplot(datos1980_2014gathered %>% filter(Variable != "Precip"), aes(as.factor(Variable), Valor, group = as.factor(Variable))) + geom_boxplot()
+
+ggplot(datos1980_2014gathered %>% filter(Variable == "Precip"), aes(as.factor(Variable), Valor, group = as.factor(Variable))) + geom_boxplot()
+```
+Histograma de valores de mediciones
+```{r}
+ggplot(datos1980_2014gathered %>% filter(Variable != "Precip"), aes(x = Valor)) + 
+  geom_histogram(bins = 100, color = "black", fill = "gray") + 
+  facet_grid(vars(Variable))
+
+ggplot(datos1980_2014gathered %>% filter(Variable == "Precip"), aes(x = Valor)) + 
+  geom_histogram(bins = 100, color = "black", fill = "gray")
+```
+
+
+7. Listado de estaciones con más datos hasta 2014 (total de días entre 1980 y 2014 = 12784)
+```{r}
+datos1980_2014 <- datosGT1980 %>% 
+  filter(aNo <= 2014) %>%
+  gather(Precip, Tmin, Tmax, key = "Variable", value = "Valor") %>% 
+  #na.omit() %>% 
+  group_by(Estacion, Variable) %>% 
+  summarise(Ns = sum(!is.na(Valor))) %>% 
+  arrange(desc(Ns)) %>% 
+  mutate(prctDias = Ns / 12784 * 100) %>% 
+  filter(prctDias > 0)
+
+datos1980_2014
+```
+
+
+8. Graficación de estaciones con más datos
+```{r}
+library(scales)
+
+ggplot(datos1980_2014, aes(x = prctDias)) + 
+  geom_histogram(bins = 100) + 
+  scale_y_continuous(breaks= pretty_breaks()) + 
+  labs(y = "Número de estaciones", x = "Porcentaje de datos completos") + 
+  facet_grid(vars(Variable))
+```
+
+Seleccionar estaciones con más del 75% de los datos completos y hacer cálculos de ubicaciones distintas con base a las coordenadas de cada estación:
+```{r}
+gt75prct <- datos1980_2014 %>% filter(prctDias >= 75)
+
+datosGT1980gg <- datosGT1980 %>% 
+  gather(Precip, Tmin, Tmax, key = "Variable", value = "Valor") %>% 
+  filter(aNo <= 2014)
+
+datosGT75 <- inner_join(gt75prct, datosGT1980gg, by = c("Estacion", "Variable")) %>% 
+  inner_join(EstLoc, by = c("Estacion" = "CODIGO")) %>% 
+  select(Estacion, Variable, prctDias, Fecha, aNo, Valor, ID, LAT, LONG)
+
+datosGT75 %>% 
+  group_by(Estacion, Variable) %>% 
+  summarise(Mediciones = sum(!is.na(Valor))) %>% 
+  arrange(desc(Mediciones))
+
+```
+
+7. Revisión de estaciones en misma ubicación (por resolución de ubicaciones)
+```{r}
+datosGT75 %>% group_by(LAT, LONG, Variable) %>% 
+  summarise(Mediciones = sum(!is.na(Valor))) %>% 
+  filter(Mediciones > 0 & LAT != 0 & LONG != 0) %>% 
+  arrange(Mediciones) %>% 
+  group_by(Variable) %>% 
+  summarise(Estaciones = n())
+```
+
+¿Qué hacer con estaciones repetidas?
+Opción tentativa: Seleccionar la estación que tenga más datos por celda.
+
+```{r}
+EstGT75Repetidas <- datosGT75 %>% 
+  group_by(Estacion, LAT, LONG, Variable) %>%
+  summarise(n = n()) %>%
+  group_by(LAT, LONG, Variable) %>% 
+  summarise(CantEst = n()) %>% 
+  arrange(CantEst)
+
+EstGT75Repetidas
+```
+
+
+
+Mapa con ubicacion de estaciones seleccionadas:
+```{r}
+leaflet(datosGT75 %>% group_by(Estacion, LAT, LONG) %>%  summarise(n())) %>% addTiles() %>% addMarkers(~LONG, ~LAT)
+```
+
+Valores de estaciones seleccionadas:
+```{r}
+datosGT75 %>% 
+  mutate(Valor = as.numeric(Valor)) %>% 
+  filter(Variable == "Tmax") %>% 
+  group_by(Variable) %>% 
+  summarise(max = max(Valor, na.rm = T), min = min(Valor, na.rm = T), promedio = mean(Valor, na.rm = T), media = median(Valor, na.rm = T))
+
+datosGT75 %>% 
+  mutate(Valor = as.numeric(Valor)) %>% 
+  filter(Variable == "Tmin") %>% 
+  group_by(Variable) %>% 
+  summarise(max = max(Valor, na.rm = T), min = min(Valor, na.rm = T), promedio = mean(Valor, na.rm = T), media = median(Valor, na.rm = T))
+
+datosGT75 %>% 
+  mutate(Valor = as.numeric(Valor)) %>% 
+  filter(Variable == "Precip") %>% 
+  group_by(Variable) %>% 
+  summarise(max = max(Valor, na.rm = T), min = min(Valor, na.rm = T), promedio = mean(Valor, na.rm = T), media = median(Valor, na.rm = T))
+```
+
+Revisar esos valores de 0 para temperaturas mínimas y máximas:
+```{r}
+datosGT75 %>% mutate(Valor = as.numeric(Valor)) %>% 
+  filter(Variable == "Tmax" & Valor == 0) %>% 
+  group_by(Estacion) %>% 
+  summarise(N = n())
+
+datosGT75 %>% mutate(Valor = as.numeric(Valor)) %>% 
+  filter(Variable == "Tmin" & Valor == 0) %>% 
+  group_by(Estacion) %>% 
+  summarise(N = n())
+```
+Eliminar esa estación para siguientes cálculos:
+```{r}
+datosGT75 <- datosGT75 %>% 
+  filter(Estacion != "84111")
+
+datosGT75 %>% 
+  mutate(Valor = as.numeric(Valor)) %>% 
+  filter(Variable == "Tmax") %>% 
+  group_by(Variable) %>% 
+  summarise(max = max(Valor, na.rm = T), min = min(Valor, na.rm = T), promedio = mean(Valor, na.rm = T), media = median(Valor, na.rm = T))
+
+datosGT75 %>% 
+  mutate(Valor = as.numeric(Valor)) %>% 
+  filter(Variable == "Tmin") %>% 
+  group_by(Variable) %>% 
+  summarise(max = max(Valor, na.rm = T), min = min(Valor, na.rm = T), promedio = mean(Valor, na.rm = T), media = median(Valor, na.rm = T))
+
+```
+
+Revisar valores de estadísticas por estación:
+```{r}
+datosGT75 %>% 
+  filter(Variable == "Tmin") %>% 
+  mutate(Valor = as.numeric(Valor)) %>%
+  group_by(Estacion) %>% 
+  summarise(max = max(Valor, na.rm = T), min = min(Valor, na.rm = T), promedio = mean(Valor, na.rm = T), media = median(Valor, na.rm = T), n = sum(!is.na(Valor)))
+
+datosGT75 %>% 
+  filter(Variable == "Tmax") %>% 
+  mutate(Valor = as.numeric(Valor)) %>%
+  group_by(Estacion) %>% 
+  summarise(max = max(Valor, na.rm = T), min = min(Valor, na.rm = T), promedio = mean(Valor, na.rm = T), media = median(Valor, na.rm = T), n = sum(!is.na(Valor)))
+
+datosGT75 %>% 
+  filter(Variable == "Precip") %>% 
+  mutate(Valor = as.numeric(Valor)) %>%
+  group_by(Estacion) %>% 
+  summarise(max = max(Valor, na.rm = T), min = min(Valor, na.rm = T), promedio = mean(Valor, na.rm = T), media = median(Valor, na.rm = T), n = sum(!is.na(Valor)))
+
+```
+
+Exportar archivo con estaciones seleccionadas:
+```{r}
+colSums(is.na(datosGT75))
+write_csv(datosGT75, "datosGT75.csv")
+```
+
+##Calculo de diferencias entre valores medidos y modelados
+
+#Extracción de valores de Netcdfs desde CDO
+
+Comando de CDO para concatenar netcdfs
+```{bash}
+shopt -s globstar
+cdo cat **/*variables*.nc estaciones.nc
+
+```
+
+Script para sacar valores de estaciones
+```{bash}
+#!/bin/bash
+touch datosMetEstaciones.txt
+while read p ; do
+  lon=$(echo $p | cut -d ',' -f 5); lat=$(echo $p | cut -d ',' -f 1);
+    cdo -outputtab,lat,lon,date,name,value -remapnn,lon=${lon}_lat=${lat} -sellevidx,1 TMAX_test.nc >> datosMetEstaciones.txt
+	done <EstacionesCoordenadas_netcdf.csv
+```
+
+Importar valores de los modelos extraidos a puntos de estaciones meteorológicas y hacer conversiones necesarias (Longitud y Temperatura)
+```{r}
+#recordar remover el "#" del archivo de texto antes de correr la rutina
+EstCoordNetcdf <- read_csv("EstacionesCoordenadas_netcdf.csv")
+EstCoordNetcdf$LONG2 <- round(EstCoordNetcdf$LONG2, 4)
+
+# datosMetEstaciones_tmax_80_13.txt
+# datosMetEstaciones_tmin_80_13.txt
+
+# netcdf_pt/datosMetEstaciones_TMPsfc_tmax.txt
+# netcdf_pt/datosMetEstaciones_TMPsfc_tmin.txt
+
+# netcdf_t/datosMetEstaciones_Tmax.txt
+# netcdf_t/datosMetEstaciones_Tmin.txt
+
+
+datosModelosTmax <- read_table2("netcdf_t/datosMetEstaciones_Tmax.txt")
+datosModelosEstacionID_Tmax <- datosModelosTmax %>% 
+  select(-X6) %>% 
+  rename(LAT = lat, LONG2 = lon, Fecha = date, ValorModelo = value) %>% 
+  group_by(LAT, LONG2) %>% 
+  summarise(n_valores = n()) %>% 
+  mutate(LONG = LONG2-360) %>% 
+  left_join(
+    EstCoordNetcdf, by = c("LAT", "LONG2")
+  )
+
+datosModelosTmin <- read_table2("netcdf_t/datosMetEstaciones_Tmin.txt")
+datosModelosEstacionID_Tmin <- datosModelosTmin %>% 
+  select(-X6) %>% 
+  rename(LAT = lat, LONG2 = lon, Fecha = date, ValorModelo = value) %>% 
+  group_by(LAT, LONG2) %>% 
+  mutate(LONG = LONG2-360) %>% 
+  left_join(
+    EstCoordNetcdf, by = c("LAT", "LONG2")
+  )
+
+datosModelosPRATEsfc <- read_table2("/media/cigefi/ISO_CA/PRATE_TMPsfc_raw/datosMetEstaciones_PRATEsfc_raw.txt")
+tabla_general_GT75prct_PRATE <- datosModelosPRATEsfc %>% 
+  select(-X6) %>% 
+  mutate(value = replace(value, which(value<0 | value>0.005), NA)) %>% 
+  #na.omit %>% 
+  rename(LAT = lat, LONG2 = lon, Fecha = date) %>% 
+  mutate(LONG = round(LONG2-360, 4), LAT = round(LAT, 4), LONG2 = round(LONG2, 4)) %>% 
+  inner_join(EstCoordNetcdf %>% 
+               mutate(LAT = round(LAT, 4), LONG = round(LONG, 4)), by = c("LAT", "LONG")) %>% 
+  mutate(mmdia = value*86400, na.rm = T) %>% 
+  group_by(LAT, LONG, Fecha, ID) %>%
+  summarise(ValorModelo = mean(mmdia, na.rm = T)) %>% 
+  right_join(datosGT75 %>%
+               mutate(LAT = round(LAT, 4), LONG = round(LONG, 4)) %>% 
+               filter(Variable == "Precip" & aNo >= 1980 & aNo <= 2012), 
+             by = c("LAT", "LONG", "Fecha")) %>% 
+  select(ID.x, Estacion, Variable, prctDias, Fecha, aNo, Valor, ValorModelo, LAT, LONG) %>% 
+  mutate(diferencia = round(as.numeric(Valor) - ValorModelo, 2))
+
+
+#datosModelosPRATE <- read_table2("netcdf_pt/datosMetEstaciones_PRATEsfc.txt")
+#datosModelosEstacionID_PRATE <- datosModelosPRATE %>% 
+#  select(-X6) %>% 
+#  rename(LAT = lat, LONG2 = lon, Fecha = date, ValorModelo = value) %>% 
+#  group_by(LAT, LONG2) %>% 
+#  mutate(LONG = LONG2-360) %>% 
+#  left_join(
+#    EstCoordNetcdf, by = c("LAT", "LONG2")
+#  )
+
+#datosModelos <- datosModelosTmax %>% 
+#  select(-X6) %>% 
+#  rename(LAT = lat, LONG2 = lon, Fecha = date, TMaxModelo = value) %>% 
+#  inner_join(
+#    datosModelosTmin %>% 
+#      select(-X6) %>% 
+#      rename(LAT = lat, LONG2 = lon, Fecha = date, TMinModelo = value), 
+#    by = c("LAT", "LONG2", "Fecha")
+#  ) %>% 
+#  gather(TMaxModelo, TMinModelo, key = "Variable", value = "Valor") %>% 
+#  select(-c(name.x, name.y))
+
+RevDatosGT75 <- datosGT75 %>% 
+  group_by(ID, Estacion, LAT, LONG) %>% 
+  summarise(n = sum(!is.na(Valor)))
+RevDatosGT75
+```
+Juntar tablas de estaciones y valores modelados.
+```{r}
+datos_comparacion_ID_Tmax <- datosModelosTmax %>% 
+  select(-X6) %>% 
+  rename(LAT = lat, LONG2 = lon, Fecha = date, ValorModelo = value) %>% 
+  mutate(ValorModelo = ValorModelo - 273.15) %>% 
+  left_join(EstCoordNetcdf, by = c("LAT", "LONG2"))
+
+tabla_general_GT75prct_Tmax <- datosGT75 %>% 
+  filter(Variable == "Tmax"& aNo <= 2008) %>% 
+  left_join(datos_comparacion_ID_Tmax, by = c("LAT", "LONG", "Fecha")) %>% 
+  select(ID.x, Estacion, Variable, prctDias, Fecha, aNo, Valor, ValorModelo, LAT, LONG) %>% 
+  mutate(diferencia = abs(as.numeric(Valor) - ValorModelo))
+#leftjoin porque solo estamos sacando las de más de 75% de datos
+
+datos_comparacion_ID_Tmin <- datosModelosTmin %>% 
+  select(-X6) %>% 
+  rename(LAT = lat, LONG2 = lon, Fecha = date, ValorModelo = value) %>% 
+  mutate(ValorModelo = ValorModelo - 273.15) %>% 
+  left_join(EstCoordNetcdf, by = c("LAT", "LONG2"))
+
+tabla_general_GT75prct_Tmin <- datosGT75 %>% 
+  filter(Variable == "Tmin"& aNo <= 2008) %>% 
+  left_join(datos_comparacion_ID_Tmin, by = c("LAT", "LONG", "Fecha")) %>% 
+  select(ID.x, Estacion, Variable, prctDias, Fecha, aNo, Valor, ValorModelo, LAT, LONG) %>% 
+  mutate(diferencia = abs(as.numeric(Valor) - ValorModelo))
+#leftjoin porque solo estamos sacando las de más de 75% de datos
+
+
+#datos_comparacion_ID_PRATE <- datosModelosPRATE %>% 
+#  select(-X6) %>% 
+#  rename(LAT = lat, LONG2 = lon, Fecha = date, ValorModelo = value) %>% 
+#  left_join(EstCoordNetcdf, by = c("LAT", "LONG2"))
+
+#tabla_general_GT75prct_PRATE <- datosGT75 %>% 
+#  filter(Variable == "Precip"& aNo <= 2008) %>% 
+#  left_join(datos_comparacion_ID_PRATE, by = c("LAT", "LONG", "Fecha")) %>% 
+#  select(ID.x, Estacion, Variable, prctDias, Fecha, aNo, Valor, ValorModelo, LAT, LONG) %>% 
+#  mutate(diferencia = abs(as.numeric(Valor) - ValorModelo))
+#leftjoin porque solo estamos sacando las de más de 75% de datos
+
+```
+Promedios y gráficos de estaciones seleccionadas:
+```{r}
+ggplot(tabla_general_GT75prct_Tmax, aes(x = as.numeric(Valor))) +
+  geom_histogram(bins = 50) +
+  geom_vline(aes(xintercept = mean(as.numeric(Valor), na.rm = T)))
+
+ggplot(tabla_general_GT75prct_Tmax, aes(x = ValorModelo)) +
+  geom_histogram(bins = 50) +
+  geom_vline(aes(xintercept = mean(ValorModelo, na.rm = T)))
+
+ggplot(tabla_general_GT75prct_Tmin, aes(x = as.numeric(Valor))) +
+  geom_histogram(bins = 50) +
+  geom_vline(aes(xintercept = mean(as.numeric(Valor), na.rm = T)))
+
+ggplot(tabla_general_GT75prct_Tmin, aes(x = ValorModelo)) +
+  geom_histogram(bins = 50) +
+  geom_vline(aes(xintercept = mean(ValorModelo, na.rm = T)))
+
+ggplot(tabla_general_GT75prct_PRATE, aes(x = as.numeric(Valor))) +
+  geom_histogram(bins = 50) +
+  scale_y_continuous(trans='log10')
+
+ggplot(tabla_general_GT75prct_PRATE, aes(x = ValorModelo)) +
+  geom_histogram(bins = 50) +
+  scale_y_continuous(trans='log10')
+
+
+```
+
+Grafico por estación:
+```{r}
+ggplot(tabla_general_GT75prct_Tmax) + 
+  geom_density(aes(x = as.numeric(Valor)), fill = "red", alpha = 0.3) +
+  geom_density(aes(x = ValorModelo), fill = "blue", alpha = 0.3) +
+  facet_grid(vars(ID.x)) + 
+  ggtitle("TMax - rojo medido, azul modelado")
+
+ggplot(tabla_general_GT75prct_Tmin) + 
+  geom_density(aes(x = as.numeric(Valor)), fill = "red", alpha = 0.3) +
+  geom_density(aes(x = ValorModelo), fill = "blue", alpha = 0.3) +
+  facet_grid(vars(ID.x)) +
+  ggtitle("TMin - rojo medido, azul modelado")
+
+ggplot(tabla_general_GT75prct_PRATE) + 
+  geom_density(aes(x = as.numeric(Valor)), fill = "red", alpha = 0.3) +
+  geom_density(aes(x = ValorModelo), fill = "blue", alpha = 0.3) +
+  facet_grid(vars(ID.x))
+```
+
+Graficar diferencias
+```{r}
+ggplot(tabla_general_GT75prct_Tmax, aes(x = diferencia)) + 
+  geom_histogram(bins = 100) +
+  geom_vline(aes(xintercept = mean(diferencia, na.rm = T)), col="red")
+
+ggplot(tabla_general_GT75prct_Tmax %>% 
+         mutate(mes = month(Fecha)) %>% 
+         group_by(aNo, mes, Estacion) %>% 
+         summarise(diffMensual = mean(diferencia)), 
+       aes(x = diffMensual)) + geom_histogram(bins = 50) + 
+  geom_vline(aes(xintercept = mean(diffMensual, na.rm = T)), col='red')
+
+
+ggplot(tabla_general_GT75prct_Tmin, aes(x = diferencia)) + 
+  geom_histogram(bins = 100) +
+  geom_vline(aes(xintercept = mean(diferencia, na.rm = T)), col="red")
+
+ggplot(tabla_general_GT75prct_Tmin %>% 
+         mutate(mes = month(Fecha)) %>% 
+         group_by(aNo, mes, Estacion) %>% 
+         summarise(diffMensual = mean(diferencia)), 
+       aes(x = diffMensual)) + geom_histogram(bins = 50) + 
+  geom_vline(aes(xintercept = mean(diffMensual, na.rm = T)), col='red')
+
+
+ggplot(tabla_general_GT75prct_PRATE, aes(x = diferencia)) + 
+  geom_histogram(bins = 100) +
+  geom_vline(aes(xintercept = mean(diferencia, na.rm = T)), col="red")
+
+ggplot(tabla_general_GT75prct_PRATE %>% 
+         mutate(mes = month(Fecha)) %>% 
+         group_by(aNo, mes, Estacion) %>% 
+         summarise(diffMensual = mean(diferencia)), 
+       aes(x = diffMensual)) + geom_histogram(bins = 50) + 
+  geom_vline(aes(xintercept = mean(diffMensual, na.rm = T)), col='red')
+
+
+tabla_general_GT75prct_Tmax %>% 
+  group_by(Estacion) %>% 
+  summarise(DiffPromedio = mean(diferencia, na.rm = T)) %>%  #difrencia promedio total
+  summarise(DiffPromedioTotal_Tmax = mean(DiffPromedio))
+
+tabla_general_GT75prct_Tmin %>% 
+  group_by(Estacion) %>% 
+  summarise(DiffPromedio = mean(diferencia, na.rm = T)) %>% 
+  summarise(DiffPromedioTotal_Tmin = mean(DiffPromedio))
+
+tabla_general_GT75prct_PRATE %>% 
+  group_by(Estacion) %>% 
+  summarise(DiffPromedio = mean(diferencia, na.rm = T)) %>% 
+  summarise(DiffPromedioTotal_Precip = mean(DiffPromedio))
+
+```
+
+Revisión de diferencias por estación:
+```{r}
+ggplot(tabla_general_GT75prct_Tmax, aes(x = as.factor(ID.x), y = diferencia)) + 
+  geom_boxplot(na.rm = T) +
+  geom_hline(aes(yintercept = median(diferencia, na.rm = T)), col='red') +
+  geom_hline(aes(yintercept = mean(diferencia, na.rm = T)), col='green') +
+  annotate("text",
+           label = "media", 
+           x = 6, y = 16, size = 5, colour = "red") + 
+    annotate("text",
+           label = "promedio", 
+           x = 6, y = 17, size = 5, colour = "green") + 
+    ggtitle("TMax por estación - valores diarios")
+
+ggplot(tabla_general_GT75prct_Tmax %>% 
+         mutate(mes = month(Fecha)) %>% 
+         group_by(aNo, mes, ID.x) %>% 
+         summarise(diffMensual = mean(diferencia, na.rm = T)), 
+       aes(x = as.factor(mes), y = diffMensual, group = mes)) + 
+  geom_boxplot()
+
+
+ggplot(tabla_general_GT75prct_Tmin, aes(x = as.factor(ID.x), y = diferencia)) + 
+  geom_boxplot(na.rm = T) +
+  geom_hline(aes(yintercept = median(diferencia, na.rm = T)), col='red') +
+  geom_hline(aes(yintercept = mean(diferencia, na.rm = T)), col='green') +
+  annotate("text",
+           label = "media", 
+           x = 6, y = 16, size = 5, colour = "red") + 
+    annotate("text",
+           label = "promedio", 
+           x = 6, y = 17, size = 5, colour = "green") +
+      ggtitle("TMin por estación - valores diarios")
+
+ggplot(tabla_general_GT75prct_Tmin %>% 
+         mutate(mes = month(Fecha)) %>% 
+         group_by(aNo, mes, ID.x) %>% 
+         summarise(diffMensual = mean(diferencia, na.rm = T)), 
+       aes(x = as.factor(mes), y = diffMensual, group = mes)) + 
+  geom_boxplot()
+
+
+ggplot(tabla_general_GT75prct_PRATE, aes(x = as.factor(ID.x), y = diferencia)) + 
+  geom_boxplot(na.rm = T)
+
+ggplot(tabla_general_GT75prct_PRATE %>% 
+         mutate(mes = month(Fecha)) %>% 
+         group_by(aNo, mes, ID.x) %>% 
+         summarise(diffMensual = mean(diferencia, na.rm = T)), 
+       aes(x = as.factor(mes), y = diffMensual, group = mes)) + 
+  geom_boxplot()
+```
+
+Revisión de valores de precipitación:
+Totales mensuales:
+```{r}
+tabla_general_GT75prct_PRATE %>% 
+  mutate(mes = month(Fecha)) %>% 
+  group_by(ID.x, aNo, mes) %>% 
+  summarise(valorMes = sum(as.numeric(Valor)),
+            valorModeloMes = round(sum(ValorModelo), 1)) %>% 
+  mutate(diffMes = abs(valorMes - valorModeloMes)) %>% 
+  group_by(aNo, mes) %>% 
+  summarise(mediaDiff = median(diffMes, na.rm = T),
+            promedioDiff = mean(diffMes, na.rm = T))
+
+tabla_general_GT75prct_PRATE %>% 
+  group_by(ID.x, aNo) %>% 
+  summarise(valoraNo = sum(as.numeric(Valor)),
+            valorModeloaNo= round(sum(ValorModelo), 1)) %>% 
+  mutate(diffaNo = valoraNo - valorModeloaNo) %>%
+  group_by(aNo) %>% 
+  summarise(prom_diffaNo = mean(diffaNo, na.rm =T),
+         media_diffaNo = median(diffaNo, na.rm=T)
+         )
+
+ggplot(
+  tabla_general_GT75prct_PRATE %>% 
+  group_by(ID.x, aNo) %>% 
+  summarise(valoraNo = sum(as.numeric(Valor)),
+            valorModeloaNo= round(sum(ValorModelo), 1)) %>% 
+  mutate(diffaNo = valoraNo - valorModeloaNo) %>%
+  group_by(aNo) %>% 
+  summarise(prom_diffaNo = mean(diffaNo, na.rm =T),
+         media_diffaNo = median(diffaNo, na.rm=T)), 
+         aes(x = aNo, y = abs(media_diffaNo))) +
+    geom_line()
+```
+
+Revisar diferencia entre totales promedio por cada año.
+```{r}
+tabla_general_GT75prct_PRATE %>% 
+  group_by(ID.x, aNo) %>% 
+  summarise(valoraNo = sum(as.numeric(Valor)),
+            valorModeloaNo= round(sum(ValorModelo), 1)) %>% 
+  group_by(aNo) %>% 
+  summarise(prom_aNo = mean(valoraNo, na.rm =T),
+         media_aNo = median(valorModeloaNo, na.rm=T)
+         )
+
+ggplot(
+  tabla_general_GT75prct_PRATE %>% 
+  group_by(ID.x, aNo) %>% 
+  summarise(valoraNo = sum(as.numeric(Valor)),
+            valorModeloaNo= round(sum(ValorModelo), 1)) %>% 
+  group_by(aNo) %>% 
+  summarise(prom_aNo = mean(valoraNo, na.rm =T),
+         promModelo_aNo = median(valorModeloaNo, na.rm=T)
+         ), 
+  aes(x = aNo, y = prom_aNo)) + 
+  geom_line() + 
+  geom_line(data = 
+    tabla_general_GT75prct_PRATE %>% 
+  group_by(ID.x, aNo) %>% 
+  summarise(valoraNo = sum(as.numeric(Valor)),
+            valorModeloaNo= round(sum(ValorModelo), 1)) %>% 
+  group_by(aNo) %>% 
+  summarise(prom_aNo = mean(valoraNo, na.rm =T),
+         promModelo_aNo = median(valorModeloaNo, na.rm=T)
+         ), 
+  aes(x = aNo, y = promModelo_aNo), colour = "red"
+  )
+
+```
+
+Verificar datos estación por estación:
+Primero buscar estaciones con menores diferencias entre modelado y medido
+```{r}
+#sumar la lluvia de todos el periodo y comparar diferencias
+tabla_general_GT75prct_PRATE %>% 
+  group_by(ID.x) %>% 
+  summarise(MedicionTotal = sum(as.numeric(Valor), na.rm = T),
+            ModeloTotal= sum(ValorModelo)) %>% 
+  mutate(diferencia = abs(MedicionTotal - ModeloTotal)) %>% 
+  arrange(diferencia)
+```
+
+¿Relación entre diferencia entre totales y porcentaje de datos completos?
+```{r}
+library(ggrepel)
+
+tabla_general_GT75prct_PRATE %>% 
+  group_by(ID.x, prctDias) %>% 
+  summarise(MedicionTotal = sum(as.numeric(Valor), na.rm = T),
+            ModeloTotal= sum(ValorModelo)) %>% 
+  mutate(diferencia = abs(MedicionTotal - ModeloTotal)) %>% 
+  arrange(diferencia)
+
+ggplot(
+  tabla_general_GT75prct_PRATE %>% 
+  group_by(ID.x, prctDias) %>% 
+  summarise(MedicionTotal = sum(as.numeric(Valor), na.rm = T),
+            ModeloTotal= sum(ValorModelo)) %>% 
+  mutate(diferencia = abs(MedicionTotal - ModeloTotal)) %>% 
+  arrange(diferencia), 
+  aes(x = prctDias, y = diferencia)) + 
+  geom_point(colour = "red")
+
+ggplot(
+  tabla_general_GT75prct_PRATE %>% 
+  group_by(ID.x, prctDias) %>% 
+  summarise(MedicionTotal = sum(as.numeric(Valor), na.rm = T),
+            ModeloTotal= sum(ValorModelo)) %>% 
+  mutate(diferencia = abs(MedicionTotal - ModeloTotal)) %>% 
+  arrange(diferencia), 
+  aes(x = prctDias, y = diferencia)) + 
+  geom_point(colour = "red") + 
+  geom_label_repel(aes(label = ID.x),
+                   box.padding   = 0.35, 
+                   point.padding = 0.5,
+                   segment.color = 'grey50')
+
+
+```
+Visualmente no aparenta existir una relación entre porcentaje de días con medición vs diferencia entre valor medido y modelado.
+
+Ahora cambiar diferencia a porcentaje del total modelado para cada estación (el total modelado siempre fue mayor que el medido):
+```{r}
+tabla_general_GT75prct_PRATE %>% 
+  group_by(ID.x, prctDias) %>% 
+  summarise(MedicionTotal = sum(as.numeric(Valor), na.rm = T),
+            ModeloTotal= sum(ValorModelo)) %>% 
+  mutate(diferencia = ModeloTotal - MedicionTotal, 
+         prcntDif = diferencia * 100 / ModeloTotal) %>% 
+  arrange(prcntDif)
+
+ggplot(
+  tabla_general_GT75prct_PRATE %>% 
+    group_by(ID.x, prctDias) %>% 
+    summarise(MedicionTotal = sum(as.numeric(Valor), na.rm = T),
+              ModeloTotal= sum(ValorModelo)) %>% 
+    mutate(diferencia = ModeloTotal - MedicionTotal, 
+           prcntDif = diferencia * 100 / ModeloTotal)
+  , aes(x = prcntDif)) + 
+  geom_histogram(bins = 50)
+
+ggplot(
+  tabla_general_GT75prct_PRATE %>% 
+    group_by(ID.x, prctDias) %>% 
+    summarise(MedicionTotal = sum(as.numeric(Valor), na.rm = T),
+              ModeloTotal= sum(ValorModelo)) %>% 
+    mutate(diferencia = ModeloTotal - MedicionTotal, 
+           prcntDif = diferencia * 100 / ModeloTotal), 
+  aes(x = prctDias, y = prcntDif)) + 
+  geom_point(colour = "blue")
+
+
+ggplot(
+  tabla_general_GT75prct_PRATE %>% 
+    group_by(ID.x, prctDias) %>% 
+    summarise(MedicionTotal = sum(as.numeric(Valor), na.rm = T),
+              ModeloTotal= sum(ValorModelo)) %>% 
+    mutate(diferencia = ModeloTotal - MedicionTotal, 
+           prcntDif = diferencia * 100 / ModeloTotal), 
+  aes(x = prctDias, y = prcntDif)) + 
+  geom_point(colour = "blue") +
+  geom_label_repel(aes(label = ID.x),
+                   box.padding   = 0.35, 
+                   point.padding = 0.5,
+                   segment.color = 'grey50')
+
+
+```
+
+
+Mapa con ubicación de estaciones meteorológicas usadas: 
+Tmax
+```{r}
+leaflet(tabla_general_GT75prct_Tmax %>% 
+          group_by(ID.x, LAT, LONG) %>%  
+          summarise(difMedia = median(diferencia, na.rm = T))
+        ) %>% 
+  addTiles() %>% 
+  addCircleMarkers(~LONG, 
+                   ~LAT, 
+                   radius = ~difMedia,
+                   color = "red",
+                   stroke = FALSE, fillOpacity = 0.5,
+                   label = ~as.character(ID.x))
+```
+
+Tmin
+```{r}
+leaflet(tabla_general_GT75prct_Tmin %>% 
+          group_by(ID.x, LAT, LONG) %>%  
+          summarise(difMedia = median(diferencia, na.rm = T))
+        ) %>% 
+  addTiles() %>% 
+  addCircleMarkers(~LONG, 
+                   ~LAT, 
+                   radius = ~difMedia,
+                   color = "red",
+                   stroke = FALSE, fillOpacity = 0.5,
+                   label = ~as.character(ID.x))
+```
+
+Precipitación
+```{r}
+leaflet(
+  tabla_general_GT75prct_PRATE %>% 
+    group_by(LONG, LAT, ID.x, prctDias) %>% 
+    summarise(MedicionTotal = sum(as.numeric(Valor), na.rm = T),
+              ModeloTotal= sum(ValorModelo)) %>% 
+    mutate(diferencia = ModeloTotal - MedicionTotal, 
+           prcntDif = diferencia * 100 / ModeloTotal)
+  ) %>% 
+  addTiles() %>% 
+  addCircleMarkers(~LONG, 
+                   ~LAT, 
+                   radius = ~prcntDif/10,
+                   color = "blue",
+                   stroke = FALSE, fillOpacity = 0.5,
+                   label = ~as.character(ID.x))
+```
+
+
+Mapas estáticos
+```{r}
+library(sf)
+library(tmap)
+library(rmapshaper)
+celdasEstaciones <- st_read("/home/cigefi/Guillermo/ISORSM/shapes/celdas_estaciones.shp")
+bordeCR <- st_read("/home/cigefi/Guillermo/ISORSM/shapes/ExtCostaRica.gpkg")
+elevacionCR <- st_read("/home/cigefi/Guillermo/ISORSM/shapes/ElevacionCR.gpkg")
+#tm_shape(elevacionCR) + tm_polygons("ELEVACION", style="quantile", border.col="transparent")
+#para cargar elevación
+
+elevacionCR <- ms_simplify(elevacionCR)
+
+TmaxMap <- st_as_sf(tabla_general_GT75prct_Tmax %>% 
+                      group_by(ID.x, LAT, LONG) %>% 
+                      summarise(media_dif = mean(diferencia, na.rm = T)), 
+                    coords = c("LONG", "LAT"), crs = 4326)
+
+TminMap <- st_as_sf(tabla_general_GT75prct_Tmin %>% 
+                      group_by(ID.x, LAT, LONG) %>% 
+                      summarise(media_dif = mean(diferencia, na.rm = T)), 
+                    coords = c("LONG", "LAT"), crs = 4326)
+
+tmap_mode('plot')
+tm_shape(bordeCR) + tm_fill() +
+  tm_shape(celdasEstaciones) + tm_fill(col = "red", alpha = 0.3) +
+  tm_shape(TmaxMap) + tm_bubbles("media_dif", 
+                                 title.size = "Diferencia en C") + tm_text("ID.x", 
+                                                        size = "media_dif", 
+                                                        auto.placement = T, 
+                                                        legend.size.show = FALSE)
+
+tm_shape(bordeCR) + tm_fill() +
+  tm_shape(celdasEstaciones) + tm_fill(col = "red", alpha = 0.3) +
+  tm_shape(TminMap) + tm_bubbles("media_dif", 
+                                 title.size = "Diferencia en C") + tm_text("ID.x", 
+                                                        size = "media_dif", 
+                                                        auto.placement = T, 
+                                                        legend.size.show = FALSE)
+
+tm_shape(bordeCR) + tm_fill() +
+  tm_shape(celdasEstaciones) + tm_fill(col = "red", alpha = 0.3) +
+  tm_shape(
+    st_as_sf(
+      tabla_general_GT75prct_PRATE %>% 
+        group_by(LONG, LAT, ID.x, prctDias) %>% 
+        summarise(MedicionTotal = sum(as.numeric(Valor), na.rm = T),
+                  ModeloTotal= sum(ValorModelo)) %>% 
+        mutate(diferencia = ModeloTotal - MedicionTotal, 
+               prcntDif = diferencia * 100 / ModeloTotal),
+      coords = c("LONG", "LAT"), crs = 4326)
+  ) + 
+  tm_bubbles("prcntDif", 
+             title.size = "% de dif entre total modelado y medido") #+
+  #tm_text("ID.x", size = "prcntDif", auto.placement = T, legend.size.show = FALSE)
+```
+Revisar este sitio para mejorar mapa:
+https://github.com/mtennekes/tmap/tree/master/demo/LondonCrimes
+
+Notar que las estaciones 66 y 65 están en una misma celda. Seleccionar únicamente una de ellas para las comparaciones.
+
+
+Graficar líneas de tiempo de las diferencias medidas y modeladas por estación
+```{r}
+xtmax <- tabla_general_GT75prct_Tmax %>% 
+  ungroup() %>%  
+  select(Fecha, ID.x, diferencia) %>% 
+  spread(ID.x, diferencia)
+
+xtmin <- tabla_general_GT75prct_Tmin %>% 
+  ungroup() %>%  
+  select(Fecha, ID.x, diferencia) %>% 
+  spread(ID.x, diferencia)
+
+library(dygraphs)
+library(xts)
+xtmax <- xts(xtmax[2:20], order.by = as.Date(xtmax$Fecha, format="%m/%d/%Y"))
+xtmin <- xts(xtmin[2:17], order.by = as.Date(xtmin$Fecha, format="%m/%d/%Y"))
+
+dygraph(xtmax) %>% 
+  dyRangeSelector() %>% 
+  dyHighlight(highlightSeriesBackgroundAlpha = 0.2,
+              hideOnMouseOut = FALSE)
+
+dygraph(xtmin) %>% 
+  dyRangeSelector() %>% 
+  dyHighlight(highlightSeriesBackgroundAlpha = 0.2,
+              hideOnMouseOut = FALSE)
+
+```
+
+Grafico de series de tiempo de diferencia media entre valores medidos y modelados.
+```{r}
+xtmaxmedia <- tabla_general_GT75prct_Tmax %>% 
+  ungroup() %>%  
+  select(Fecha, ID.x, diferencia) %>% 
+  spread(ID.x, diferencia)
+
+diffmaxMedia <- apply(xtmaxmedia[2:20], 1, median, na.rm=T)
+xtmaxmedia$diffTMaxMedia <- diffmaxMedia
+xtmaxmedia <- xts(xtmaxmedia[21], order.by = as.Date(xtmaxmedia$Fecha, format="%m/%d/%Y"))
+
+dygraph(xtmaxmedia) %>% 
+  dyRangeSelector()
+
+xtminmedia <- tabla_general_GT75prct_Tmin %>% 
+  ungroup() %>%  
+  select(Fecha, ID.x, diferencia) %>% 
+  spread(ID.x, diferencia)
+
+diffminMedia <- apply(xtminmedia[2:17], 1, median, na.rm=T)
+xtminmedia$diffTMinMedia <- diffminMedia
+xtminmedia <- xts(xtminmedia[18], order.by = as.Date(xtminmedia$Fecha, format="%m/%d/%Y"))
+
+dygraph(xtminmedia) %>% 
+  dyRangeSelector()
+```
+
+
+#Lectura de archivos Netcdf
+```{r}
+library(ncdf4)
+fecha_inicio <- ymd("2010-01-01") - days(1)
+ncpath <- "/home/cigefi/Guillermo/ISORSM/"
+ncname <- "CPRATsfc_10_d"  
+ncfname <- paste(ncpath, ncname, ".nc", sep="")
+dname <- "cpratsfc" 
+
+```
+
+Desplegar mapa con extención de netcdf
+```{r}
+library(RColorBrewer)
+library(raster)
+
+ncin <- nc_open(ncfname)
+precip <- ncvar_get(ncin,"cpratsfc")
+
+lon <- ncvar_get(ncin,"lon")
+lat <- ncvar_get(ncin,"lat")
+lon2<-lon-360
+
+precip[precip==fillvalue$value] <- NA
+dlname <- ncatt_get(ncin,dname,"long_name")
+dunits <- ncatt_get(ncin,dname,"units")
+fillvalue <- ncatt_get(ncin,dname,"_FillValue")
+dim(tmp_array)
+
+nc_close(ncin)
+
+fillvalue <- ncatt_get(ncin,dname,"_FillValue")
+
+precip_slice <- precip[,,1,1]
+image(lon2, lat, precip_slice, col=rev(brewer.pal(10, "RdBu")))
+
+
+```
+
+##Comparación de valores con temperaturas sacadas de variable *TMPsfc*
+Importar valores de los modelos extraidos a puntos de estaciones meteorológicas y hacer conversiones necesarias (Longitud y Temperatura)
+```{r}
+#recordar remover el "#" del archivo de texto antes de correr la rutina
+datosModelosTmax <- read_table2("netcdf_pt/datosMetEstaciones_TMPsfc_tmax.txt")
+datosModelosEstacionID_Tmax <- datosModelosTmax %>% 
+  select(-X6) %>% 
+  rename(LAT = lat, LONG2 = lon, Fecha = date, ValorModelo = value) %>% 
+  group_by(LAT, LONG2) %>% 
+  summarise(n_valores = n()) %>% 
+  mutate(LONG = LONG2-360) %>% 
+  left_join(
+    EstCoordNetcdf, by = c("LAT", "LONG2")
+  )
+
+datosModelosTmin <- read_table2("datosMetEstaciones_tmin_80_13.txt")
+datosModelosEstacionID_Tmin <- datosModelosTmin %>% 
+  select(-X6) %>% 
+  rename(LAT = lat, LONG2 = lon, Fecha = date, ValorModelo = value) %>% 
+  group_by(LAT, LONG2) %>% 
+  mutate(LONG = LONG2-360) %>% 
+  left_join(
+    EstCoordNetcdf, by = c("LAT", "LONG2")
+  )
+```
